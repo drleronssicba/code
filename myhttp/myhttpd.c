@@ -1,4 +1,5 @@
 #include<stdio.h>
+#include<stdlib.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
 #include <errno.h>
@@ -16,28 +17,28 @@
 #define LINE_MAX 1024
 
 void startup(int sock) {
-  printf("%d\n", sock);
-  struct sockaddr_in server_socket;
+    printf("%d\n", sock);
+    struct sockaddr_in server_socket;
 
-  //填写sockaddr_in结构
-  bzero(&server_socket, sizeof(server_socket));
-  server_socket.sin_family = AF_INET;
-  server_socket.sin_addr.s_addr = htonl(INADDR_ANY);
-  server_socket.sin_port = htons(_PORT_);
-  
-  //复用 
-  int flag = 1;
-  setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+    //填写sockaddr_in结构
+    bzero(&server_socket, sizeof(server_socket));
+    server_socket.sin_family = AF_INET;
+    server_socket.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_socket.sin_port = htons(_PORT_);
 
-  if(bind(sock, (struct sockaddr*)&server_socket, sizeof(struct sockaddr_in)) < 0) {
-    perror("bind");
-    close(sock);
-  }
+    //复用 
+    int flag = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
 
-  if(listen(sock, _BACKLG_) < 0) {
-    perror("listen");
-    close(sock);
-  }
+    if(bind(sock, (struct sockaddr*)&server_socket, sizeof(struct sockaddr_in)) < 0) {
+        perror("bind");
+        close(sock);
+    }
+
+    if(listen(sock, _BACKLG_) < 0) {
+        perror("listen");
+        close(sock);
+    }
 }
 
 int getlin(int sock, char line[]) {
@@ -49,16 +50,19 @@ int getlin(int sock, char line[]) {
         n = recv(sock, &c, 1, 0);
         if( n > 0 ) {
             if( c == '\r'  ){//将所有的\r\n(windows) 和 \r(mac os) 统一转化成\n
-                n = recv(sock, &c, 1, MSG_PEEK); //对下一个字符制作检测，在内核接受缓冲区中，并不清除该字符
-                if( n > 0 && c == '\n'  ){
-                    recv(sock, &c, 1, 0);//读取该字符
-                }else{
+                recv(sock, &c, 1, MSG_PEEK); //对下一个字符制作检测，在内核接受缓冲区中，并不清除该字符
+                if( c != '\n'  ){
                     c = '\n';
+                }else{
+                    recv(sock, &c, 1, 0);
                 }
             }
             line[i++] = c;
+            if(c == '\n') {
+                break;
+            }
         }else{
-            c = '\n';
+            break;
         }
     }
     line[i] = '\0';
@@ -72,10 +76,33 @@ int clean_head(int sock) {
             printf("getlin 失败\n");
             return -1;
         }
-       // printf("%s",line);
+        // printf("%s",line);
     } while(line[0] != '\n');
     return 0;
 }
+
+int get_post_body_lenth(int sock) {
+    int len = 0;
+    char line[LINE_MAX];
+    memset(line, 0, sizeof(line));
+    do
+    {
+        getlin(sock, line);
+        if(strncmp(line, "Content-Length: ", 16) == 0) {
+            len = atoi(line + 16);
+        }
+    }while(strcmp(line, "\n") != 0);
+    return len;
+}
+
+void get_post_body(int sock, char buf[], int len) {
+    int i = 0;
+    while(i < len) {
+        recv(sock, &buf[i++], 1, 0); 
+    }
+    buf[i] = '\0';
+}
+
 
 void res_begin(int sock) {
     char buf[LINE_MAX / 32] = "HTTP/1.1 200 OK\r\n";
@@ -106,7 +133,7 @@ int send_path_file(int sock, char* path) {
     if(stat(path, &st) == -1) {
         //文件不存在
         //发送错误页面  TODO
-        
+
     } else {
         //文件存在
         //可判断是不是目录
@@ -120,69 +147,80 @@ int send_path_file(int sock, char* path) {
 }
 
 void* server(void* arg) {
-    int sock =  *(int*) arg; //sock为客户端套接字
-    
+    //int sock =  *(int*) arg; //sock为客户端套接字
+    int sock =  (int)arg; //sock为客户端套接字
+
     char first_line[LINE_MAX];
     memset(first_line, 0, sizeof(first_line));
     getlin(sock, first_line);
     //printf("first_line: %s", first_line);
-    
+
     char* tmp = first_line;
     char* cur = first_line;
-    char method[LINE_MAX / 32];
-    char url[LINE_MAX / 4];
+    char* method = NULL;
     char* path = NULL;
     char* para = NULL;
+    char post_para[LINE_MAX / 8];
     int cgi = 0;
-    memset(method, 0, sizeof(method));
-    memset(url, 0, sizeof(url));
+
+    printf("%s\n", first_line);
+
     while(*tmp++ != ' ');
     *(tmp - 1) = '\0';
-    strcpy(method, cur);
+    method = cur;
     cur = tmp;
+    path = tmp;
+
     while(*tmp++ != ' ');
     *(tmp - 1) = '\0';
-    strcpy(url, cur);
-    path = url;
-    clean_head(sock);
-   // if(strcmp("GET", method) == 0) {
-   //     //GET方法
-   //     tmp = url;
-   //     while(*tmp != '\0' && *tmp != '?') {
-   //         tmp++;
-   //     }
-   //     if(*tmp == '\0') {
-   //         para = NULL;
-   //     } 
-   //     if(*tmp == '?') {
-   //         *para = '\0';
-   //         para = tmp + 1;
-   //     }
-   //     if(para == NULL) {
-   //         cgi = 0;
-   //     } else {
-   //         cgi = 1;
-   //     }
-   // } 
-   // else if(strcmp("POST", method) == 0) {
-   //     
-
-   // } else {
-   //     //未定义方法
-   //     printf("未定义方法，不做处理\n");
-   //     close(sock);
-   //     return NULL;
-   // }
 
 
-  //  if(cgi == 0) {
-  //      if( send_path_file(sock, path) == -1) {
-  //          //发送文件失败
-  //          printf("send_path_file 发送文件失败\n");
-  //      }
-  //  } else {
+    if(strcmp("GET", method) == 0) {
+        clean_head(sock);
+        tmp = path;
+        //GET方法
+        while(*tmp != '\0' && *tmp != '?') {
+            tmp++;
+        }
+        if(*tmp == '\0') {
+            para = NULL;
+        } else if(*tmp == '?') {
+            *tmp = '\0';
+            para = tmp + 1;
+        }
+        if(para == NULL) {
+            cgi = 0;
+        } else {
+            cgi = 1;
+        }
+    } 
+    else if(strcmp("POST", method) == 0) {
+        cgi = 1;
+        char buf[LINE_MAX];
+        para = buf;
+        memset(buf, 0, sizeof(buf));
+        int len = get_post_body_lenth(sock);
+        get_post_body(sock, buf, len);
 
-  //  }
+    } else {
+        clean_head(sock);
+        //未定义方法
+        printf("未定义方法，不做处理\n");
+        close(sock);
+        return NULL;
+    }
+
+
+    if(cgi == 0) {
+        printf("cgi = 0\n");
+        if( send_path_file(sock, path) == -1) {
+            //发送文件失败
+            printf("send_path_file 发送文件失败\n");
+        }
+    } else {
+        printf("cgi = 1\n");
+
+    }
 
 
     printf("method: %s\n", method);
@@ -194,36 +232,36 @@ void* server(void* arg) {
 
 int main()
 {
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if(sock < 0) {
-    perror("socket");
-    return 1;
-  }
-  startup(sock);
-
-  //printf("bind and listen success, wait accept...\n");
-
-  while(1) {
-    struct sockaddr_in client_socket;
-    socklen_t len = 0;
-
-    //accept()
-    //本函数从s的等待连接队列中抽取第一个连接，创建一个与s同类的新的套接口并返回句柄。\
-    //如果队列中无等待连接，且套接口为阻塞方式，则accept()阻塞调用进程直至新的连接出现。
-    //如果套接口为非阻塞方式且队列中无等待连接，则accept()返回一错误代码。
-    //已接受连接的套接口不能用于接受新的连接，原套接口仍保持开放
-    printf("等待链接...\n");
-    int client_sock = accept(sock, (struct sockaddr*)&client_socket, &len);
-    if(client_sock < 0) {
-      perror("accept");
-      continue;
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) {
+        perror("socket");
+        return 1;
     }
-    
-    //以下证明accept已经获得了一个新的套接字,创建一个线程去处理
-    pthread_t tid = 0;
-    pthread_create(&tid, NULL, server, (void*)&client_sock);
-    printf("链接处理完成\n");
-    pthread_detach(tid);
-  }
-  return 0;
+    startup(sock);
+
+    //printf("bind and listen success, wait accept...\n");
+
+    while(1) {
+        struct sockaddr_in client_socket;
+        socklen_t len = 0;
+
+        //accept()
+        //本函数从s的等待连接队列中抽取第一个连接，创建一个与s同类的新的套接口并返回句柄。\
+        //如果队列中无等待连接，且套接口为阻塞方式，则accept()阻塞调用进程直至新的连接出现。
+        //如果套接口为非阻塞方式且队列中无等待连接，则accept()返回一错误代码。
+        //已接受连接的套接口不能用于接受新的连接，原套接口仍保持开放
+        printf("等待链接...\n");
+        int client_sock = accept(sock, (struct sockaddr*)&client_socket, &len);
+        if(client_sock < 0) {
+            perror("accept");
+            continue;
+        }
+
+        //以下证明accept已经获得了一个新的套接字,创建一个线程去处理
+        pthread_t tid = 0;
+        pthread_create(&tid, NULL, server, (void*)client_sock);
+        printf("链接处理完成\n");
+        pthread_detach(tid);
+    }
+    return 0;
 }
