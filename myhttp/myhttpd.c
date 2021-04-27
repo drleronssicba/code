@@ -11,6 +11,7 @@
 #include<fcntl.h>
 #include<sys/sendfile.h>
 #include<pthread.h>
+#include<sys/wait.h>
 
 #define _PORT_ 9999
 #define _BACKLG_ 5
@@ -103,10 +104,11 @@ void get_post_body(int sock, char buf[], int len) {
     buf[i] = '\0';
 }
 
-
 void res_begin(int sock) {
     char buf[LINE_MAX / 32] = "HTTP/1.1 200 OK\r\n";
     send(sock, buf, strlen(buf), 0);
+    //sprintf(buf,"\r\n");
+    //send(sock, buf, strlen(buf), 0);
 }
 
 void res_end(int sock) {
@@ -128,21 +130,88 @@ int send_path_file(int sock, char* path) {
         fd = open(tmp_path, 'r');
     }
 
+    printf("文件名：%s\n",tmp_path);
     res_begin(sock);
     struct stat st;
     if(stat(path, &st) == -1) {
         //文件不存在
         //发送错误页面  TODO
-
+        printf("文件不存在\n");
     } else {
         //文件存在
         //可判断是不是目录
         //可判断文件有没有执行权限
         //TODO
-        sendfile(sock, fd, NULL, st.st_size);
+        printf("文件存在，准备发送文件\n");
+        
+        if(sendfile(sock, fd, NULL, st.st_size) == -1) {
+            //发送失败
+            printf("文件发送失败\n");
+        }
+        res_end(sock);
+        printf("文件发送成功\n");
     }
-    res_end(sock);
     close(fd);
+    return 0;
+}
+
+int exe_cgi(int sock, char* path, char* method, char* para) {
+    char para_env[LINE_MAX / 2];
+
+    //发送响应报头 TODO
+    
+    char tmp_path[LINE_MAX / 2];
+    memset(tmp_path, 0, LINE_MAX / 2);
+    strcpy(tmp_path, "./root/cgi");
+    strcpy(tmp_path+6, path); 
+
+    int input[2];
+    int output[2];
+
+    pipe(input);
+    pipe(output);
+    
+    pid_t id = fork();
+    //fork()之后，父子进程依然可以看见上面的参数部分
+
+    if(id < 0) {
+        return 404;
+    } else if (id == 0) {
+        //child
+        close(input[1]);
+        close(output[0]);
+        dup2(input[0], 0);
+        dup2(output[1], 1);
+        
+        //读父进程写进管道的参数
+        sprintf(para_env, "PARA=%s", para);
+        putenv(para_env);
+        //printf("child: %s\n",para_env);
+        //printf("child: %s\n",tmp_path);
+
+        //TODO path??  //替换可能不成功
+        //execl(path, path, NULL);
+        
+        //不execl，可以printf到浏览器, 所以execl有问题
+        //printf("HTTP1.1 200 OK\r\n");
+        //printf("\r\n");
+
+        exit(1);
+    } else {
+        //father
+        close(input[0]);
+        close(output[1]);
+        
+        char c;
+        while(read(output[0],&c, 1) > 0 ) {
+            send(sock, &c, 1, 0);
+        }
+        waitpid(id, NULL, 0);
+        close(input[1]);
+        close(output[0]);
+    }
+
+
     return 0;
 }
 
@@ -163,7 +232,7 @@ void* server(void* arg) {
     char post_para[LINE_MAX / 8];
     int cgi = 0;
 
-    printf("%s\n", first_line);
+    //printf("%s\n", first_line);
 
     while(*tmp++ != ' ');
     *(tmp - 1) = '\0';
@@ -174,8 +243,8 @@ void* server(void* arg) {
     while(*tmp++ != ' ');
     *(tmp - 1) = '\0';
 
-
-    if(strcmp("GET", method) == 0) {
+    //get Get geT ...
+    if(strcasecmp("GET", method) == 0) {
         clean_head(sock);
         tmp = path;
         //GET方法
@@ -194,7 +263,7 @@ void* server(void* arg) {
             cgi = 1;
         }
     } 
-    else if(strcmp("POST", method) == 0) {
+    else if(strcasecmp("POST", method) == 0) {
         cgi = 1;
         char buf[LINE_MAX];
         para = buf;
@@ -211,21 +280,21 @@ void* server(void* arg) {
     }
 
 
-    if(cgi == 0) {
+    if(cgi) {
+       printf("cgi = 1\n");
+       int ret = exe_cgi(sock, path, method, para);
+    } else {
         printf("cgi = 0\n");
         if( send_path_file(sock, path) == -1) {
             //发送文件失败
             printf("send_path_file 发送文件失败\n");
         }
-    } else {
-        printf("cgi = 1\n");
-
     }
 
 
-    printf("method: %s\n", method);
-    printf("path: %s\n", path);
-    printf("paramete: %s\n", para);
+   // printf("method: %s\n", method);
+   // printf("path: %s\n", path);
+   // printf("paramete: %s\n", para);
     close(sock);
     return NULL;
 }
