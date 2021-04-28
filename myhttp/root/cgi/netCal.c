@@ -30,14 +30,15 @@ void mycal(char *buff)
 }
 int main()
 {
-    printf("200 OK HTTP/1.1\r\n");
+    printf("HTTP/1.1 200 OK\r\n");
     printf("\r\n");
-   // char buf[MAX]={0};
-   // memset(buf, 0 , MAX);
-   // if(getenv("PARA")) {
-   //     strcpy(buf, getenv("PARA"));
-   // }
-   // mycal(buf);
+    char buf[MAX]={0};
+    memset(buf, 0 , MAX);
+    if(getenv("PARA")) {
+        strcpy(buf, getenv("PARA"));
+    }
+    mycal(buf);
+    printf("\r\n");
 	return 0;
 }
 

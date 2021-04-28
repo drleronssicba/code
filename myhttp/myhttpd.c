@@ -163,7 +163,7 @@ int exe_cgi(int sock, char* path, char* method, char* para) {
     char tmp_path[LINE_MAX / 2];
     memset(tmp_path, 0, LINE_MAX / 2);
     strcpy(tmp_path, "./root/cgi");
-    strcpy(tmp_path+6, path); 
+    strcpy(tmp_path + 10, path); 
 
     int input[2];
     int output[2];
@@ -188,10 +188,13 @@ int exe_cgi(int sock, char* path, char* method, char* para) {
         putenv(para_env);
         //printf("child: %s\n",para_env);
         //printf("child: %s\n",tmp_path);
+        //printf("child: %s\n", getenv("PARA"));
 
+        //printf("child: %s\n", tmp_path);
         //TODO path??  //替换可能不成功
-        //execl(path, path, NULL);
-        
+        if(execl(tmp_path, tmp_path, NULL) == -1) {
+            printf("程序替换失败\n");
+        }
         //不execl，可以printf到浏览器, 所以execl有问题
         //printf("HTTP1.1 200 OK\r\n");
         //printf("\r\n");
@@ -205,6 +208,7 @@ int exe_cgi(int sock, char* path, char* method, char* para) {
         char c;
         while(read(output[0],&c, 1) > 0 ) {
             send(sock, &c, 1, 0);
+            printf("%c", c);
         }
         waitpid(id, NULL, 0);
         close(input[1]);
